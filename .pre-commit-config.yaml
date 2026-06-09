@@ -31,10 +31,15 @@ repos:
     rev: v1.13.0
     hooks:
       - id: mypy
-        args: [--config-file=pyproject.toml]
+        args: [ --config-file=pyproject.toml ]
         additional_dependencies:
           - pydantic>=2.10
+          - pydantic-settings>=2.0
           - sqlalchemy>=2.0
+          - sqlalchemy[asyncio]
+          - fastapi>=0.100
+          - redis>=5.0
+          - loguru>=0.7
           - types-redis
 
   # ── Bandit (security) ───────────────────────────────────

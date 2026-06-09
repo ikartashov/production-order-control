@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-from core.config import get_settings
+from src.core.config import get_settings
 
 
 class Base(DeclarativeBase):

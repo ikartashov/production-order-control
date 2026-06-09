@@ -42,6 +42,7 @@ reportlab = "^4.2"
 
 # HTTP (для webhook-клиента)
 httpx = "^0.28"
+greenlet = "^3.5.1"
 
 [tool.poetry.group.dev.dependencies]
 # Linters & formatters

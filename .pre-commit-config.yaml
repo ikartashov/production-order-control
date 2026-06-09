@@ -41,6 +41,7 @@ repos:
           - redis>=5.0
           - loguru>=0.7
           - types-redis
+        exclude: ^alembic/
 
   # ── Bandit (security) ───────────────────────────────────
   - repo: https://github.com/PyCQA/bandit

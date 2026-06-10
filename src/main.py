@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
+from api.v1.routers.batches import router as batches_router
+from api.v1.routers.products import router as products_router
 from core.cache import check_redis_connection, close_redis
 from core.config import get_settings
 from core.database import check_db_connection
@@ -32,9 +34,8 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
-    # Роутеры подключаются здесь в следующих модулях.
-    # from api.v1 import router as api_router
-    # app.include_router(api_router, prefix="/api/v1")
+    app.include_router(batches_router, prefix="/api/v1")
+    app.include_router(products_router, prefix="/api/v1")
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:

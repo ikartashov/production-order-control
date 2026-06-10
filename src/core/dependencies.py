@@ -30,8 +30,6 @@ async def get_redis_client() -> Redis:  # type: ignore[type-arg]
 
 
 # Сокращённые аннотации
-# Используйте как типы параметров в обработчиках роутов — не нужно каждый раз
-# писать ``Annotated[AsyncSession, Depends(get_db)]``.
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 RedisClient = Annotated[Redis, Depends(get_redis_client)]

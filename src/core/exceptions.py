@@ -43,6 +43,12 @@ class ServiceUnavailableError(AppError):
     http_status = status.HTTP_503_SERVICE_UNAVAILABLE
 
 
+class ValidationError(AppError):
+    """Ошибка валидации бизнес-логики."""
+
+    http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 # Обработчики исключений FastAPI
 
 

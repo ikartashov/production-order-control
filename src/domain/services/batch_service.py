@@ -4,11 +4,11 @@ from typing import Any
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import ConflictError, NotFoundError
-from src.data.models.batch import Batch
-from src.data.models.work_center import WorkCenter
-from src.data.repositories.batch_repository import BatchRepository
-from src.data.repositories.work_center_repository import WorkCenterRepository
+from core.exceptions import ConflictError, NotFoundError
+from data.models.batch import Batch
+from data.models.work_center import WorkCenter
+from data.repositories.batch_repository import BatchRepository
+from data.repositories.work_center_repository import WorkCenterRepository
 
 
 class BatchService:
@@ -103,9 +103,9 @@ class BatchService:
             elif not update_data["is_closed"] and batch.is_closed:
                 update_data["closed_at"] = None
 
-        batch = await self._batch_repo.update(batch, **update_data)
+        await self._batch_repo.update(batch, **update_data)
         logger.info("Обновлена партия batch_id={}", batch_id)
-        return batch
+        return await self.get_batch(batch_id)
 
     async def get_batches_list(
         self, filters: dict[str, Any]

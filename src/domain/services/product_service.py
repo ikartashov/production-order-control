@@ -5,11 +5,11 @@ from typing import Any
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import ConflictError, NotFoundError, ValidationError
-from src.data.models.batch import Batch
-from src.data.models.product import Product
-from src.data.repositories.batch_repository import BatchRepository
-from src.data.repositories.product_repository import ProductRepository
+from core.exceptions import ConflictError, NotFoundError, ValidationError
+from data.models.batch import Batch
+from data.models.product import Product
+from data.repositories.batch_repository import BatchRepository
+from data.repositories.product_repository import ProductRepository
 
 
 class ProductService:
@@ -70,3 +70,48 @@ class ProductService:
             )
 
         return all_products
+
+    async def aggregate_products(
+        self, batch_id: int, unique_codes: list[str]
+    ) -> list[Product]:
+        """
+        Агрегировать продукцию по уникальным кодам.
+
+        Проверяет:
+        - Партия существует
+        - Партия не закрыта
+        - Коды принадлежат партии
+        - Продукция ещё не агрегирована
+        """
+        batch = await self._batch_repo.get_by_id(batch_id)
+        if batch is None:
+            raise NotFoundError(f"Партия с id={batch_id} не найдена")
+        if batch.is_closed:
+            raise ValidationError(
+                f"Партия id={batch_id} закрыта — агрегация невозможна"
+            )
+
+        products = await self._product_repo.get_by_codes_and_batch(
+            batch_id, unique_codes
+        )
+
+        found_codes = {p.unique_code for p in products}
+        missing = set(unique_codes) - found_codes
+        if missing:
+            raise NotFoundError(
+                f"Коды не найдены в партии: {', '.join(sorted(missing))}"
+            )
+
+        already = [p.unique_code for p in products if p.is_aggregated]
+        if already:
+            raise ConflictError(f"Уже агрегированы: {', '.join(sorted(already))}")
+
+        aggregated = await self._product_repo.aggregate_products(
+            [p.id for p in products]
+        )
+        logger.info(
+            "Агрегировано {} единиц в партии batch_id={}",
+            len(aggregated),
+            batch_id,
+        )
+        return aggregated

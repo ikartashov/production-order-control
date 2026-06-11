@@ -6,9 +6,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-import src.data.models  # noqa: F401
-from src.core.config import get_settings
-from src.core.database import Base
+import data.models  # noqa: F401
+from core.config import get_settings
+from core.database import Base
 
 settings = get_settings()
 # Конфиг Alembic (alembic.ini)

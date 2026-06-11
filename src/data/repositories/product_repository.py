@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
-from src.data.models.product import Product
-from src.data.repositories.base_repository import BaseRepository
+from data.models.product import Product
+from data.repositories.base_repository import BaseRepository
 
 
 class ProductRepository(BaseRepository[Product]):
@@ -29,5 +29,32 @@ class ProductRepository(BaseRepository[Product]):
             Product(unique_code=code, batch_id=batch_id) for code in unique_codes
         ]
         self._session.add_all(products)
+        await self._session.flush()
+        return products
+
+    async def get_by_codes_and_batch(
+        self, batch_id: int, unique_codes: list[str]
+    ) -> list[Product]:
+        """Получить продукцию по кодам в рамках партии."""
+        result = await self._session.execute(
+            select(Product).where(
+                Product.batch_id == batch_id,
+                Product.unique_code.in_(unique_codes),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def aggregate_products(self, product_ids: list[int]) -> list[Product]:
+        """Установить флаг агрегации для списка продуктов."""
+        from datetime import UTC, datetime
+
+        result = await self._session.execute(
+            select(Product).where(Product.id.in_(product_ids))
+        )
+        products = list(result.scalars().all())
+        now = datetime.now(UTC)
+        for product in products:
+            product.is_aggregated = True
+            product.aggregated_at = now
         await self._session.flush()
         return products

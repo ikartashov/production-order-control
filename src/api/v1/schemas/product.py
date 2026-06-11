@@ -30,3 +30,11 @@ class ProductListResponse(BaseModel):
 
     items: list[ProductResponse]
     total: int
+
+
+class AggregateRequest(BaseModel):
+    """Схема запроса агрегации продукции."""
+
+    unique_codes: list[str]
+
+    model_config = {"extra": "forbid"}

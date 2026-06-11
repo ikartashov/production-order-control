@@ -3,8 +3,8 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload, selectinload
 
-from src.data.models.batch import Batch
-from src.data.repositories.base_repository import BaseRepository
+from data.models.batch import Batch
+from data.repositories.base_repository import BaseRepository
 
 
 class BatchRepository(BaseRepository[Batch]):

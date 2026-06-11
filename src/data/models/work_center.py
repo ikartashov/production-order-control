@@ -3,11 +3,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.core.database import Base
-from src.data.models.mixins import TimestampMixin
+from core.database import Base
+from data.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
-    from src.data.models.batch import Batch
+    from data.models.batch import Batch
 
 
 class WorkCenter(TimestampMixin, Base):

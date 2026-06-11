@@ -49,25 +49,16 @@ class ValidationError(AppError):
     http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
-# Обработчики исключений FastAPI
-
-
-def _app_error_handler(_: Request, exc: AppError) -> JSONResponse:
-    """Преобразует любой подкласс ``AppError`` в JSON HTTP-ответ."""
-    logger.debug("AppError {}: {}", exc.__class__.__name__, exc.detail)
-    return JSONResponse(
-        status_code=exc.http_status,
-        content={"detail": exc.detail},
-    )
-
-
 def register_exception_handlers(app: FastAPI) -> None:
-    """Регистрирует все обработчики исключений в приложении FastAPI.
+    """Регистрирует все обработчики исключений в приложении FastAPI."""
 
-    Вызывается один раз при старте приложения в ``main.py``.
-    """
-    app.add_exception_handler(
-        AppError,
-        _app_error_handler,  # type: ignore[arg-type]
-    )
+    @app.exception_handler(AppError)
+    async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
+        """Преобразует любой подкласс AppError в JSON HTTP-ответ."""
+        logger.debug("AppError {}: {}", exc.__class__.__name__, exc.detail)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": exc.detail},
+        )
+
     logger.info("Обработчики исключений зарегистрированы")

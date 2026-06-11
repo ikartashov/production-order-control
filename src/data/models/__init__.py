@@ -1,9 +1,9 @@
 """Модели базы данных."""
 
-from src.data.models.batch import Batch
-from src.data.models.product import Product
-from src.data.models.webhook import WebhookDelivery, WebhookSubscription
-from src.data.models.work_center import WorkCenter
+from data.models.batch import Batch
+from data.models.product import Product
+from data.models.webhook import WebhookDelivery, WebhookSubscription
+from data.models.work_center import WorkCenter
 
 __all__ = [
     "WorkCenter",

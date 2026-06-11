@@ -13,8 +13,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.core.database import Base
-from src.data.models.mixins import TimestampMixin
+from core.database import Base
+from data.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
     pass

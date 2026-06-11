@@ -13,12 +13,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.core.database import Base
-from src.data.models.mixins import TimestampMixin
+from core.database import Base
+from data.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
-    from src.data.models.product import Product
-    from src.data.models.work_center import WorkCenter
+    from data.models.product import Product
+    from data.models.work_center import WorkCenter
 
 
 class Batch(TimestampMixin, Base):

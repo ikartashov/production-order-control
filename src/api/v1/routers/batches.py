@@ -2,16 +2,22 @@ from datetime import date
 
 from fastapi import APIRouter, Query, status
 
-from src.api.v1.schemas.batch import (
+from api.v1.schemas.batch import (
     BatchCreateItem,
     BatchListItem,
     BatchListResponse,
     BatchResponse,
     BatchUpdateRequest,
 )
-from src.core.dependencies import DbSession
-from src.data.models.batch import Batch
-from src.domain.services.batch_service import BatchService
+from api.v1.schemas.product import (
+    AggregateRequest,
+    ProductListResponse,
+    ProductResponse,
+)
+from core.dependencies import DbSession
+from data.models.batch import Batch
+from domain.services.batch_service import BatchService
+from domain.services.product_service import ProductService
 
 router = APIRouter(prefix="/batches", tags=["Партии"])
 
@@ -98,3 +104,21 @@ async def update_batch(
     """Обновить партию."""
     service = _get_service(session)
     return await service.update_batch(batch_id, payload.model_dump(exclude_none=True))
+
+
+@router.post(
+    "/{batch_id}/aggregate",
+    response_model=ProductListResponse,
+)
+async def aggregate_products(
+    batch_id: int,
+    payload: AggregateRequest,
+    session: DbSession,
+) -> ProductListResponse:
+    """Агрегировать продукцию в партии по уникальным кодам."""
+    service = ProductService(session)
+    products = await service.aggregate_products(batch_id, payload.unique_codes)
+    return ProductListResponse(
+        items=[ProductResponse.model_validate(p) for p in products],
+        total=len(products),
+    )

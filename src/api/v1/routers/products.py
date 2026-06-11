@@ -1,12 +1,12 @@
 from fastapi import APIRouter, status
 
-from src.api.v1.schemas.product import (
+from api.v1.schemas.product import (
     ProductCreateItem,
     ProductListResponse,
     ProductResponse,
 )
-from src.core.dependencies import DbSession
-from src.domain.services.product_service import ProductService
+from core.dependencies import DbSession
+from domain.services.product_service import ProductService
 
 router = APIRouter(prefix="/products", tags=["Продукция"])
 

@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
-from src.data.models.work_center import WorkCenter
-from src.data.repositories.base_repository import BaseRepository
+from data.models.work_center import WorkCenter
+from data.repositories.base_repository import BaseRepository
 
 
 class WorkCenterRepository(BaseRepository[WorkCenter]):

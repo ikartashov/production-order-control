@@ -1,6 +1,9 @@
+import os
+import tempfile
 from datetime import date
+from uuid import uuid4
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, UploadFile, status
 
 from api.v1.schemas.batch import (
     BatchCreateItem,
@@ -8,6 +11,13 @@ from api.v1.schemas.batch import (
     BatchListResponse,
     BatchResponse,
     BatchUpdateRequest,
+)
+from api.v1.schemas.batch_files import (
+    AggregateAsyncRequest,
+    AggregateAsyncResponse,
+    ExportRequest,
+    ReportRequest,
+    TaskAcceptedResponse,
 )
 from api.v1.schemas.product import (
     AggregateRequest,
@@ -18,6 +28,11 @@ from core.dependencies import DbSession
 from data.models.batch import Batch
 from domain.services.batch_service import BatchService
 from domain.services.product_service import ProductService
+from storage.minio_service import MinIOService
+from tasks.aggregation_tasks import aggregate_products_batch
+from tasks.export_tasks import export_batches_to_file
+from tasks.import_tasks import import_batches_from_file
+from tasks.report_tasks import generate_batch_report
 
 router = APIRouter(prefix="/batches", tags=["Партии"])
 
@@ -122,3 +137,77 @@ async def aggregate_products(
         items=[ProductResponse.model_validate(p) for p in products],
         total=len(products),
     )
+
+
+@router.post(
+    "/{batch_id}/aggregate-async",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AggregateAsyncResponse,
+)
+async def aggregate_products_async(
+    batch_id: int,
+    payload: AggregateAsyncRequest,
+) -> AggregateAsyncResponse:
+    """Запустить асинхронную (частично-успешную) агрегацию продукции в партии."""
+    task = aggregate_products_batch.delay(batch_id, payload.unique_codes)
+    return AggregateAsyncResponse(
+        task_id=task.id,
+        status="PENDING",
+        message="Aggregation task started",
+    )
+
+
+@router.post(
+    "/{batch_id}/reports",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=TaskAcceptedResponse,
+)
+async def create_batch_report(
+    batch_id: int,
+    payload: ReportRequest,
+) -> TaskAcceptedResponse:
+    """Запустить формирование отчёта по партии (Excel/PDF), загружается в MinIO."""
+    task = generate_batch_report.delay(batch_id, payload.format, payload.email)
+    return TaskAcceptedResponse(task_id=task.id, status="PENDING")
+
+
+@router.post(
+    "/import",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=TaskAcceptedResponse,
+)
+async def import_batches(file: UploadFile) -> TaskAcceptedResponse:
+    """Загрузить Excel/CSV файл в MinIO и запустить асинхронный импорт партий."""
+    suffix = os.path.splitext(file.filename or "")[1] or ".xlsx"
+    content = await file.read()
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        temp_path = tmp.name
+
+    try:
+        object_name = f"import_{uuid4().hex}{suffix}"
+        MinIOService().upload_file(
+            bucket="imports", file_path=temp_path, object_name=object_name
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    task = import_batches_from_file.delay(object_name)
+    return TaskAcceptedResponse(
+        task_id=task.id,
+        status="PENDING",
+        message="File uploaded, import started",
+    )
+
+
+@router.post(
+    "/export",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=TaskAcceptedResponse,
+)
+async def export_batches(payload: ExportRequest) -> TaskAcceptedResponse:
+    """Запустить асинхронный экспорт партий (Excel/CSV) по фильтрам."""
+    task = export_batches_to_file.delay(payload.filters, payload.format)
+    return TaskAcceptedResponse(task_id=task.id, status="PENDING")

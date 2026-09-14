@@ -13,8 +13,11 @@ from data.models.work_center import WorkCenter
 
 BATCH_REPO_PATH = "domain.services.batch_service.BatchRepository"
 WC_REPO_PATH = "domain.services.batch_service.WorkCenterRepository"
+BATCH_PRODUCT_REPO_PATH = "domain.services.batch_service.ProductRepository"
+BATCH_WEBHOOK_SERVICE_PATH = "domain.services.batch_service.WebhookService"
 PRODUCT_REPO_PATH = "domain.services.product_service.ProductRepository"
 PRODUCT_BATCH_REPO_PATH = "domain.services.product_service.BatchRepository"
+PRODUCT_WEBHOOK_SERVICE_PATH = "domain.services.product_service.WebhookService"
 
 
 # Фабрики входных данных
@@ -50,24 +53,43 @@ def make_product_dict(unique_code: str = "CODE001", batch_id: int = 1) -> dict:
 
 @contextmanager
 def patch_batch_service_repos(
-    mock_batch_repo: AsyncMock, mock_wc_repo: AsyncMock
+    mock_batch_repo: AsyncMock,
+    mock_wc_repo: AsyncMock,
+    mock_product_repo: AsyncMock | None = None,
+    mock_webhook_service: AsyncMock | None = None,
 ) -> Iterator[None]:
-    """Патчит оба репозитория BatchService одновременно."""
+    """Патчит репозитории и WebhookService, используемые BatchService.
+
+    ``mock_product_repo``/``mock_webhook_service`` нужны из-за отправки
+    вебхуков (``batch_created``/``batch_updated``/``batch_closed``) —
+    по умолчанию это безобидные AsyncMock-заглушки, которые не влияют
+    на существующие тесты, не проверяющие вебхуки напрямую.
+    """
+    if mock_product_repo is None:
+        mock_product_repo = AsyncMock()
+        mock_product_repo.get_batch_stats.return_value = (0, 0)
+    mock_webhook_service = mock_webhook_service or AsyncMock()
     with (
         patch(BATCH_REPO_PATH, return_value=mock_batch_repo),
         patch(WC_REPO_PATH, return_value=mock_wc_repo),
+        patch(BATCH_PRODUCT_REPO_PATH, return_value=mock_product_repo),
+        patch(BATCH_WEBHOOK_SERVICE_PATH, return_value=mock_webhook_service),
     ):
         yield
 
 
 @contextmanager
 def patch_product_service_repos(
-    mock_product_repo: AsyncMock, mock_batch_repo: AsyncMock
+    mock_product_repo: AsyncMock,
+    mock_batch_repo: AsyncMock,
+    mock_webhook_service: AsyncMock | None = None,
 ):
-    """Патчит оба репозитория ProductService одновременно."""
+    """Патчит репозитории и WebhookService, используемые ProductService."""
+    mock_webhook_service = mock_webhook_service or AsyncMock()
     with (
         patch(PRODUCT_REPO_PATH, return_value=mock_product_repo),
         patch(PRODUCT_BATCH_REPO_PATH, return_value=mock_batch_repo),
+        patch(PRODUCT_WEBHOOK_SERVICE_PATH, return_value=mock_webhook_service),
     ):
         yield
 

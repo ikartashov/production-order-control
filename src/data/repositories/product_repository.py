@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from data.models.product import Product
 from data.repositories.base_repository import BaseRepository
@@ -58,3 +58,14 @@ class ProductRepository(BaseRepository[Product]):
             product.aggregated_at = now
         await self._session.flush()
         return products
+
+    async def get_batch_stats(self, batch_id: int) -> tuple[int, int]:
+        """Получить (всего единиц, агрегировано) для партии одним COUNT-запросом."""
+        result = await self._session.execute(
+            select(
+                func.count(Product.id),
+                func.count(Product.id).filter(Product.is_aggregated.is_(True)),
+            ).where(Product.batch_id == batch_id)
+        )
+        total, aggregated = result.one()
+        return total, aggregated

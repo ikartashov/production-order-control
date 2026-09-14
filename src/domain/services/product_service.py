@@ -10,6 +10,7 @@ from data.models.batch import Batch
 from data.models.product import Product
 from data.repositories.batch_repository import BatchRepository
 from data.repositories.product_repository import ProductRepository
+from domain.services.webhook_service import WebhookService
 
 
 class ProductService:
@@ -114,4 +115,19 @@ class ProductService:
             len(aggregated),
             batch_id,
         )
+
+        webhook_service = WebhookService(self._session)
+        for p in aggregated:
+            await webhook_service.dispatch_event(
+                "product_aggregated",
+                {
+                    "unique_code": p.unique_code,
+                    "batch_id": p.batch_id,
+                    "batch_number": batch.batch_number,
+                    "aggregated_at": (
+                        p.aggregated_at.isoformat() if p.aggregated_at else None
+                    ),
+                },
+            )
+
         return aggregated

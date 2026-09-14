@@ -33,11 +33,20 @@ repos:
   # (celery, minio, pandas, openpyxl, reportlab, httpx и т.д.) без необходимости
   # дублировать их в additional_dependencies и без риска несовпадения архитектуры
   # бинарного пакета mypy (arm64/x86_64) в кэше pre-commit.
+  #
+  # `arch -arm64` — на этой машине /usr/local/bin/git собран только под x86_64,
+  # поэтому git (и всё, что он запускает, включая этот хук) выполняется под
+  # Rosetta; без явного пиннинга архитектуры .venv/bin/python наследует x86_64
+  # и падает при попытке dlopen native-модуля mypy, собранного под arm64.
+  # На системах без Rosetta/`arch` просто используется обычный вызов.
   - repo: local
     hooks:
       - id: mypy
         name: mypy
-        entry: poetry run mypy --config-file=pyproject.toml src
+        entry: >-
+          sh -c 'command -v arch >/dev/null 2>&1 &&
+          exec arch -arm64 poetry run mypy --config-file=pyproject.toml src ||
+          exec poetry run mypy --config-file=pyproject.toml src'
         language: system
         types: [python]
         exclude: ^(alembic/|tests/)

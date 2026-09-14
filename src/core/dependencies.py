@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cache import get_redis
 from core.database import AsyncSessionFactory
+from storage.minio_service import MinIOService
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -29,7 +30,13 @@ async def get_redis_client() -> Redis:  # type: ignore[type-arg]
     return client
 
 
+def get_minio_service() -> MinIOService:
+    """Возвращает сервис для работы с файловым хранилищем MinIO."""
+    return MinIOService()
+
+
 # Сокращённые аннотации
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 RedisClient = Annotated[Redis, Depends(get_redis_client)]
+MinioClient = Annotated[MinIOService, Depends(get_minio_service)]

@@ -1,8 +1,4 @@
-"""Инфраструктура Celery: создание приложения и базовая конфигурация.
-
-Задачи (task-модули) регистрируются позже через параметр ``include`` —
-см. будущие модули в ``tasks/``.
-"""
+"""Инфраструктура Celery: создание приложения и базовая конфигурация."""
 
 from celery import Celery
 
@@ -14,7 +10,13 @@ celery_app = Celery(
     "production_control",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=[],
+    include=[
+        "tasks.webhook_tasks",
+        "tasks.aggregation_tasks",
+        "tasks.report_tasks",
+        "tasks.import_tasks",
+        "tasks.export_tasks",
+    ],
 )
 
 celery_app.conf.update(

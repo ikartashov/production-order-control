@@ -28,6 +28,7 @@ redis = { version = "^5.2", extras = ["hiredis"] }
 # Task queue
 celery = { version = "^5.4", extras = ["redis"] }
 kombu = "^5.4"                   # RabbitMQ transport
+flower = "^2.0"                  # Celery monitoring UI
 
 # Storage
 minio = "^7.2"

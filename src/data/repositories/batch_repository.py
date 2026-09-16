@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
 from data.models.batch import Batch
@@ -100,3 +100,25 @@ class BatchRepository(BaseRepository[Batch]):
             select(Batch).where(Batch.id.in_(batch_ids))
         )
         return list(result.scalars().all())
+
+    async def get_expired_open_batches(self) -> list[Batch]:
+        """Получить открытые партии, у которых смена уже завершилась (shift_end < now)."""
+        result = await self._session.execute(
+            select(Batch).where(
+                Batch.is_closed.is_(False),
+                Batch.shift_end < datetime.now(UTC),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def bulk_close(self, batch_ids: list[int]) -> None:
+        """Массово закрыть партии (is_closed=True, closed_at=now) одним UPDATE."""
+        if not batch_ids:
+            return
+        now = datetime.now(UTC)
+        await self._session.execute(
+            update(Batch)
+            .where(Batch.id.in_(batch_ids))
+            .values(is_closed=True, closed_at=now)
+        )
+        await self._session.flush()

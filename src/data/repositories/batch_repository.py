@@ -76,3 +76,27 @@ class BatchRepository(BaseRepository[Batch]):
             setattr(batch, key, value)
         await self._session.flush()
         return batch
+
+    async def get_summary_counts(self) -> tuple[int, int]:
+        """Получить (всего партий, активных партий) одним COUNT-запросом."""
+        result = await self._session.execute(
+            select(
+                func.count(Batch.id),
+                func.count(Batch.id).filter(Batch.is_closed.is_(False)),
+            )
+        )
+        total, active = result.one()
+        return total, active
+
+    async def get_by_ids(self, batch_ids: list[int]) -> list[Batch]:
+        """Получить партии по списку ID одним запросом (без связей).
+
+        Используется для батч-сравнения (``AnalyticsService.compare_batches``),
+        чтобы избежать N+1 из последовательных запросов по одной партии.
+        """
+        if not batch_ids:
+            return []
+        result = await self._session.execute(
+            select(Batch).where(Batch.id.in_(batch_ids))
+        )
+        return list(result.scalars().all())

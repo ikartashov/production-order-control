@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Query, UploadFile, status
 
+from api.v1.schemas.analytics import BatchStatisticsResponse
 from api.v1.schemas.batch import (
     BatchCreateItem,
     BatchListItem,
@@ -26,6 +27,7 @@ from api.v1.schemas.product import (
 )
 from core.dependencies import DbSession
 from data.models.batch import Batch
+from domain.services.analytics_service import AnalyticsService
 from domain.services.batch_service import BatchService
 from domain.services.product_service import ProductService
 from storage.minio_service import MinIOService
@@ -108,6 +110,16 @@ async def get_batch(batch_id: int, session: DbSession) -> Batch:
     """Получить партию по ID."""
     service = _get_service(session)
     return await service.get_batch(batch_id)
+
+
+@router.get("/{batch_id}/statistics", response_model=BatchStatisticsResponse)
+async def get_batch_statistics(
+    batch_id: int, session: DbSession
+) -> BatchStatisticsResponse:
+    """Статистика по партии: производство/агрегация и таймлайн выполнения смены."""
+    service = AnalyticsService(session)
+    result = await service.get_batch_statistics(batch_id)
+    return BatchStatisticsResponse.model_validate(result)
 
 
 @router.patch("/{batch_id}", response_model=BatchResponse)

@@ -69,3 +69,41 @@ class ProductRepository(BaseRepository[Product]):
         )
         total, aggregated = result.one()
         return total, aggregated
+
+    async def get_global_stats(self) -> tuple[int, int]:
+        """Получить (всего единиц, агрегировано) по всей продукции одним COUNT-запросом."""
+        result = await self._session.execute(
+            select(
+                func.count(Product.id),
+                func.count(Product.id).filter(Product.is_aggregated.is_(True)),
+            )
+        )
+        total, aggregated = result.one()
+        return total, aggregated
+
+    async def get_stats_for_batches(
+        self, batch_ids: list[int]
+    ) -> dict[int, tuple[int, int]]:
+        """Получить {batch_id: (всего единиц, агрегировано)} для набора партий.
+
+        Один агрегатный запрос с ``GROUP BY batch_id`` вместо отдельного
+        ``get_batch_stats`` на каждую партию — используется в
+        ``AnalyticsService.compare_batches`` для устранения N+1. Партии без
+        продукции в выдаче отсутствуют (GROUP BY не даёт строку для пустой
+        группы) — вызывающий код должен подставлять ``(0, 0)`` по умолчанию.
+        """
+        if not batch_ids:
+            return {}
+        result = await self._session.execute(
+            select(
+                Product.batch_id,
+                func.count(Product.id),
+                func.count(Product.id).filter(Product.is_aggregated.is_(True)),
+            )
+            .where(Product.batch_id.in_(batch_ids))
+            .group_by(Product.batch_id)
+        )
+        return {
+            batch_id: (total, aggregated)
+            for batch_id, total, aggregated in result.all()
+        }

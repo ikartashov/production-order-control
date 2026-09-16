@@ -12,6 +12,7 @@ from celery_app import celery_app
 from core.database import get_session
 from core.exceptions import ConflictError, ValidationError
 from domain.services.batch_service import BatchService
+from domain.services.webhook_service import WebhookService
 from storage.minio_service import MinIOService
 
 _IMPORTS_BUCKET = "imports"
@@ -75,11 +76,32 @@ async def _import_batches_from_file_async(object_name: str) -> dict[str, Any]:
                     errors.append({"row": row_num, "error": exc.detail})
                 except (KeyError, ValueError, TypeError) as exc:
                     errors.append({"row": row_num, "error": str(exc)})
+
+            webhook_service = WebhookService(session)
+            try:
+                await webhook_service.dispatch_event(
+                    "import_completed",
+                    {
+                        "total_rows": total_rows,
+                        "created": created,
+                        "skipped": len(errors),
+                        "errors": errors,
+                    },
+                )
+            except Exception as exc:
+                # Постановка уведомления в очередь не должна откатывать уже
+                # успешно созданные партии — логируем и продолжаем.
+                logger.error(
+                    "Не удалось поставить в очередь событие import_completed "
+                    "(total_rows={} created={} skipped={}): {}",
+                    total_rows,
+                    created,
+                    len(errors),
+                    exc,
+                )
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-
-    # TODO(webhooks): fire "import_completed" event via WebhookService once wired
 
     logger.info(
         "Импорт партий завершён: всего={} создано={} ошибок={}",

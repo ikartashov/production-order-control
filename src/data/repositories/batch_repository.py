@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
 from data.models.batch import Batch
@@ -76,3 +76,49 @@ class BatchRepository(BaseRepository[Batch]):
             setattr(batch, key, value)
         await self._session.flush()
         return batch
+
+    async def get_summary_counts(self) -> tuple[int, int]:
+        """Получить (всего партий, активных партий) одним COUNT-запросом."""
+        result = await self._session.execute(
+            select(
+                func.count(Batch.id),
+                func.count(Batch.id).filter(Batch.is_closed.is_(False)),
+            )
+        )
+        total, active = result.one()
+        return total, active
+
+    async def get_by_ids(self, batch_ids: list[int]) -> list[Batch]:
+        """Получить партии по списку ID одним запросом (без связей).
+
+        Используется для батч-сравнения (``AnalyticsService.compare_batches``),
+        чтобы избежать N+1 из последовательных запросов по одной партии.
+        """
+        if not batch_ids:
+            return []
+        result = await self._session.execute(
+            select(Batch).where(Batch.id.in_(batch_ids))
+        )
+        return list(result.scalars().all())
+
+    async def get_expired_open_batches(self) -> list[Batch]:
+        """Получить открытые партии, у которых смена уже завершилась (shift_end < now)."""
+        result = await self._session.execute(
+            select(Batch).where(
+                Batch.is_closed.is_(False),
+                Batch.shift_end < datetime.now(UTC),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def bulk_close(self, batch_ids: list[int]) -> None:
+        """Массово закрыть партии (is_closed=True, closed_at=now) одним UPDATE."""
+        if not batch_ids:
+            return
+        now = datetime.now(UTC)
+        await self._session.execute(
+            update(Batch)
+            .where(Batch.id.in_(batch_ids))
+            .values(is_closed=True, closed_at=now)
+        )
+        await self._session.flush()

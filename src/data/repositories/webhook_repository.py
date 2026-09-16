@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import joinedload
 
 from data.models.webhook import WebhookDelivery, WebhookSubscription
@@ -114,3 +114,40 @@ class WebhookRepository(BaseRepository[WebhookSubscription]):
             .limit(limit)
         )
         return list(result.scalars().all()), total
+
+    async def claim_deliveries_to_retry(self) -> list[WebhookDelivery]:
+        """Атомарно выбрать неудачные доставки с оставшимися попытками и
+        сразу перевести их в статус ``"retrying"``.
+
+        Сравнивает количество выполненных попыток (``attempts``) с лимитом
+        подписки (``WebhookSubscription.retry_count``), поэтому требует join.
+        Выбор и смена статуса выполняются одним UPDATE (с подзапросом) в
+        рамках одной транзакции/round-trip к БД, поэтому строка не может
+        быть повторно выбрана следующим sweep'ом (``WHERE status='failed'``),
+        пока за неё ещё отвечает ранее поставленная в очередь задача
+        ``send_webhook`` — это и есть защита от дублирующей отправки: более
+        ранняя реализация делала простой read-only SELECT без смены статуса,
+        из-за чего периодический sweep (Celery Beat) мог повторно выбрать ту
+        же доставку, пока предыдущий ``send_webhook`` для неё ещё не
+        завершился.
+        ``send_webhook`` в любом случае безусловно перезапишет ``status`` на
+        ``"success"``/``"failed"`` по факту исполнения, поэтому оставлять
+        строку в состоянии ``"retrying"`` до этого момента безопасно.
+        """
+        matching_ids = (
+            select(WebhookDelivery.id)
+            .join(WebhookSubscription)
+            .where(
+                WebhookDelivery.status == "failed",
+                WebhookDelivery.attempts < WebhookSubscription.retry_count,
+            )
+        )
+        result = await self._session.execute(
+            update(WebhookDelivery)
+            .where(WebhookDelivery.id.in_(matching_ids))
+            .values(status="retrying")
+            .returning(WebhookDelivery)
+        )
+        deliveries = list(result.scalars().all())
+        await self._session.flush()
+        return deliveries

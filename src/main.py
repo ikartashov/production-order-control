@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
+from api.v1.routers.analytics import router as analytics_router
 from api.v1.routers.batches import router as batches_router
 from api.v1.routers.products import router as products_router
 from api.v1.routers.tasks import router as tasks_router
@@ -13,6 +14,7 @@ from core.cache import check_redis_connection, close_redis
 from core.config import get_settings
 from core.database import check_db_connection
 from core.exceptions import register_exception_handlers
+from core.rate_limit import RateLimitMiddleware
 from storage.minio_service import MinIOService
 
 
@@ -39,7 +41,9 @@ def create_app() -> FastAPI:
     )
 
     register_exception_handlers(app)
+    app.add_middleware(RateLimitMiddleware)
 
+    app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(batches_router, prefix="/api/v1")
     app.include_router(products_router, prefix="/api/v1")
     app.include_router(work_centers_router, prefix="/api/v1")

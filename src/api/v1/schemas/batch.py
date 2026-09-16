@@ -26,6 +26,7 @@ class BatchCreateItem(BaseModel):
     @field_validator("ДатаВремяОкончанияСмены")
     @classmethod
     def end_after_start(cls, v: datetime, info: Any) -> datetime:
+        """Проверяет, что окончание смены позже её начала."""
         start = info.data.get("ДатаВремяНачалаСмены")
         if start and v <= start:
             raise ValueError(

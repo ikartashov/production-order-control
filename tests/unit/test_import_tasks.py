@@ -46,10 +46,16 @@ class TestImportBatchesFromFileAsync:
         mock_batch_service = AsyncMock()
         mock_batch_service.create_batches.return_value = [MagicMock()]
 
+        mock_webhook_service = AsyncMock()
+
         with (
             patch("tasks.import_tasks.MinIOService", return_value=mock_minio),
             patch("tasks.import_tasks.get_session", _fake_session),
             patch("tasks.import_tasks.BatchService", return_value=mock_batch_service),
+            patch(
+                "tasks.import_tasks.WebhookService",
+                return_value=mock_webhook_service,
+            ),
         ):
             result = await _import_batches_from_file_async("import_test.csv")
 
@@ -58,6 +64,16 @@ class TestImportBatchesFromFileAsync:
         assert result["skipped"] == 0
         assert result["errors"] == []
         assert mock_batch_service.create_batches.await_count == 2
+
+        mock_webhook_service.dispatch_event.assert_awaited_once()
+        event_type, payload = mock_webhook_service.dispatch_event.call_args.args
+        assert event_type == "import_completed"
+        assert payload == {
+            "total_rows": 2,
+            "created": 2,
+            "skipped": 0,
+            "errors": [],
+        }
 
     async def test_one_bad_row_does_not_stop_import(self) -> None:
         content = _HEADER + _row(1001) + _row(1002)
@@ -76,6 +92,7 @@ class TestImportBatchesFromFileAsync:
             patch("tasks.import_tasks.MinIOService", return_value=mock_minio),
             patch("tasks.import_tasks.get_session", _fake_session),
             patch("tasks.import_tasks.BatchService", return_value=mock_batch_service),
+            patch("tasks.import_tasks.WebhookService", return_value=AsyncMock()),
         ):
             result = await _import_batches_from_file_async("import_test.csv")
 
@@ -102,6 +119,7 @@ class TestImportBatchesFromFileAsync:
             patch("tasks.import_tasks.MinIOService", return_value=mock_minio),
             patch("tasks.import_tasks.get_session", _fake_session),
             patch("tasks.import_tasks.BatchService", return_value=mock_batch_service),
+            patch("tasks.import_tasks.WebhookService", return_value=AsyncMock()),
         ):
             result = await _import_batches_from_file_async("import_test.csv")
 
@@ -111,6 +129,46 @@ class TestImportBatchesFromFileAsync:
         assert len(result["errors"]) == 1
         assert result["errors"][0]["row"] == 1
         mock_batch_service.create_batches.assert_not_awaited()
+
+    async def test_webhook_dispatch_failure_does_not_fail_import(self) -> None:
+        """Регрессионный тест: если постановка события import_completed в
+        очередь падает (например, RabbitMQ временно недоступен), это не
+        должно откатывать уже успешно созданные партии — задача обязана
+        вернуть свой обычный успешный результат."""
+        content = _HEADER + _row(1001) + _row(1002)
+        mock_minio = MagicMock()
+        mock_minio.download_file.side_effect = lambda b, o, p: _write_csv(
+            b, o, p, content
+        )
+
+        mock_batch_service = AsyncMock()
+        mock_batch_service.create_batches.return_value = [MagicMock()]
+
+        mock_webhook_service = AsyncMock()
+        mock_webhook_service.dispatch_event.side_effect = ConnectionError(
+            "AMQP broker unreachable"
+        )
+
+        with (
+            patch("tasks.import_tasks.MinIOService", return_value=mock_minio),
+            patch("tasks.import_tasks.get_session", _fake_session),
+            patch("tasks.import_tasks.BatchService", return_value=mock_batch_service),
+            patch(
+                "tasks.import_tasks.WebhookService",
+                return_value=mock_webhook_service,
+            ),
+        ):
+            result = await _import_batches_from_file_async("import_test.csv")
+
+        assert result == {
+            "success": True,
+            "total_rows": 2,
+            "created": 2,
+            "skipped": 0,
+            "errors": [],
+        }
+        assert mock_batch_service.create_batches.await_count == 2
+        mock_webhook_service.dispatch_event.assert_awaited_once()
 
     async def test_empty_file_reports_zero_rows(self) -> None:
         content = _HEADER
@@ -125,6 +183,7 @@ class TestImportBatchesFromFileAsync:
             patch("tasks.import_tasks.MinIOService", return_value=mock_minio),
             patch("tasks.import_tasks.get_session", _fake_session),
             patch("tasks.import_tasks.BatchService", return_value=mock_batch_service),
+            patch("tasks.import_tasks.WebhookService", return_value=AsyncMock()),
         ):
             result = await _import_batches_from_file_async("import_test.csv")
 

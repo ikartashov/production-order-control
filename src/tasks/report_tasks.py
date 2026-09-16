@@ -18,6 +18,7 @@ from celery_app import celery_app
 from core.database import get_session
 from data.models.batch import Batch
 from domain.services.batch_service import BatchService
+from domain.services.webhook_service import WebhookService
 from storage.minio_service import MinIOService
 
 _REPORTS_BUCKET = "reports"
@@ -62,9 +63,29 @@ async def _generate_batch_report_async(batch_id: int, format: str) -> dict[str, 
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-    # TODO(webhooks): fire "report_generated" event via WebhookService once wired
+        expires_at = (datetime.now(UTC) + timedelta(days=7)).isoformat()
 
-    expires_at = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+        webhook_service = WebhookService(session)
+        try:
+            await webhook_service.dispatch_event(
+                "report_generated",
+                {
+                    "batch_id": batch_id,
+                    "report_type": format,
+                    "file_url": file_url,
+                    "expires_at": expires_at,
+                },
+            )
+        except Exception as exc:
+            # Файл уже успешно загружен в MinIO — сбой постановки уведомления
+            # в очередь не должен откатывать транзакцию и проваливать задачу.
+            logger.error(
+                "Не удалось поставить в очередь событие report_generated "
+                "(batch_id={} file_url={}): {}",
+                batch_id,
+                file_url,
+                exc,
+            )
 
     logger.info(
         "Отчёт по партии batch_id={} сформирован ({}): {}",

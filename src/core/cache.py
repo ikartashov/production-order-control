@@ -1,5 +1,7 @@
+import functools
 import json
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar, cast
 
 from loguru import logger
 from redis.asyncio import ConnectionPool, Redis
@@ -83,10 +85,82 @@ async def cache_delete(key: str) -> None:
     await redis.delete(key)
 
 
+_SCAN_DELETE_CHUNK_SIZE = 500
+
+
 async def cache_delete_pattern(pattern: str) -> None:
-    """Удаляет все ключи, соответствующие шаблону *pattern* (например, ``"batches_list:*"``)."""
+    """Удаляет все ключи, соответствующие шаблону *pattern* (например, ``"batches_list:*"``).
+
+    Использует неблокирующий ``SCAN`` (через ``scan_iter``) вместо ``KEYS``,
+    чтобы не блокировать однопоточный event loop Redis O(N)-сканированием
+    всего keyspace на время выполнения. Найденные ключи удаляются пачками
+    по ``_SCAN_DELETE_CHUNK_SIZE`` штук, чтобы не отправлять один огромный
+    ``DEL`` с тысячами аргументов.
+    """
     redis = await get_redis()
-    keys: list[str] = await redis.keys(pattern)
-    if keys:
-        await redis.delete(*keys)
-        logger.debug("Инвалидировано {} ключей по шаблону '{}'", len(keys), pattern)
+    deleted_count = 0
+    chunk: list[str] = []
+    async for key in redis.scan_iter(match=pattern):
+        chunk.append(key)
+        if len(chunk) >= _SCAN_DELETE_CHUNK_SIZE:
+            await redis.delete(*chunk)
+            deleted_count += len(chunk)
+            chunk = []
+    if chunk:
+        await redis.delete(*chunk)
+        deleted_count += len(chunk)
+    if deleted_count:
+        logger.debug("Инвалидировано {} ключей по шаблону '{}'", deleted_count, pattern)
+
+
+# Декоратор кеширования
+
+
+F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
+
+
+def cached(ttl: int, key_prefix: str) -> Callable[[F], F]:
+    """Декоратор-фабрика: кеширует результат асинхронной функции/метода в Redis.
+
+    Ключ кеша строится из ``key_prefix`` + позиционных аргументов (аргумент
+    под индексом 0 исключается, т.к. декоратор рассчитан на методы
+    экземпляра и ``self`` не JSON-сериализуем и не должен влиять на ключ) +
+    именованных аргументов, сериализованных детерминированно через
+    ``json.dumps(kwargs, sort_keys=True, default=str)``.
+
+    При кеш-хите десериализованное значение возвращается без вызова
+    обёрнутой функции; при промахе функция вызывается, результат кешируется
+    через ``cache_set`` (который сериализует его как есть через
+    ``json.dumps(value, default=str)``) и возвращается.
+
+    Подходит только для функций, чей результат уже является простым
+    JSON-сериализуемым значением (dict/list/str/int/...). Для методов,
+    возвращающих SQLAlchemy ORM-объекты (например,
+    ``BatchService.get_batch``/``get_batches_list``), этот декоратор
+    напрямую не используется — ``cache_set``/``cache_get`` не умеют
+    корректно провести ORM-объект через ``json.dumps``/``json.loads`` и
+    сохранить его связи (``work_center``, ``products``). Там кеширование
+    сделано вручную вокруг маленького сериализатора ORM<->dict — см.
+    комментарии в ``domain/services/batch_service.py``.
+    """
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            key_args = args[1:]
+            parts = [key_prefix, *(str(a) for a in key_args)]
+            if kwargs:
+                parts.append(json.dumps(kwargs, sort_keys=True, default=str))
+            cache_key = ":".join(parts)
+
+            cached_value = await cache_get(cache_key)
+            if cached_value is not None:
+                return cached_value
+
+            result = await func(*args, **kwargs)
+            await cache_set(cache_key, result, ttl)
+            return result
+
+        return cast(F, wrapper)
+
+    return decorator

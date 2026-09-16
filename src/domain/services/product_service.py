@@ -10,6 +10,7 @@ from data.models.batch import Batch
 from data.models.product import Product
 from data.repositories.batch_repository import BatchRepository
 from data.repositories.product_repository import ProductRepository
+from domain.services.batch_service import invalidate_batch_caches
 from domain.services.webhook_service import WebhookService
 
 
@@ -70,6 +71,13 @@ class ProductService:
                 batch_id,
             )
 
+        if all_products:
+            # batch_detail мог быть возвращён ранее с устаревшим (без новых
+            # единиц) списком products; batch_ids — все партии, задетые этим
+            # вызовом (может быть несколько за один запрос). dashboard_stats
+            # тоже меняется — total_products вырос.
+            await invalidate_batch_caches(batch_ids, invalidate_list=False)
+
         return all_products
 
     async def aggregate_products(
@@ -129,5 +137,8 @@ class ProductService:
                     ),
                 },
             )
+
+        if aggregated:
+            await invalidate_batch_caches(batch_id, invalidate_list=False)
 
         return aggregated

@@ -122,6 +122,78 @@ class TestAddProducts:
         _, codes = mock_product_repo.bulk_create.call_args.args
         assert len(codes) == 3
 
+    async def test_invalidates_batch_detail_cache_after_adding_products(
+        self,
+        mock_session: AsyncMock,
+        batch: Batch,
+        product: Product,
+    ) -> None:
+        """Регрессия Fix 1: add_products должен инвалидировать batch_detail
+
+        и dashboard_stats затронутой партии — раньше этого не происходило,
+        и GET /batches/{id} мог до 10 минут отдавать партию без только что
+        добавленной продукции.
+        """
+        mock_product_repo = AsyncMock()
+        mock_batch_repo = AsyncMock()
+        mock_batch_repo.get_by_id.return_value = batch
+        mock_product_repo.get_existing_codes.return_value = set()
+        mock_product_repo.bulk_create.return_value = [product]
+
+        mock_cache_delete = AsyncMock()
+        mock_cache_delete_pattern = AsyncMock()
+
+        with patch_product_service_repos(
+            mock_product_repo,
+            mock_batch_repo,
+            mock_cache_delete=mock_cache_delete,
+            mock_cache_delete_pattern=mock_cache_delete_pattern,
+        ):
+            service = ProductService(mock_session)
+            await service.add_products([make_product_dict("CODE001", batch_id=1)])
+
+        deleted_keys = {call.args[0] for call in mock_cache_delete.await_args_list}
+        assert "batch_detail:1" in deleted_keys
+        assert "dashboard_stats" in deleted_keys
+        # add_products не меняет поля BatchListItem (is_closed/nomenclature/...),
+        # поэтому список партий инвалидировать не нужно.
+        mock_cache_delete_pattern.assert_not_awaited()
+
+    async def test_invalidates_caches_for_every_batch_touched(
+        self,
+        mock_session: AsyncMock,
+        batch: Batch,
+        product: Product,
+    ) -> None:
+        """Один вызов add_products может добавить продукцию сразу в несколько
+
+        партий (сгруппировано по batch_id) — все затронутые batch_id должны
+        получить инвалидацию своего batch_detail.
+        """
+        mock_product_repo = AsyncMock()
+        mock_batch_repo = AsyncMock()
+        mock_batch_repo.get_by_id.return_value = batch
+        mock_product_repo.get_existing_codes.return_value = set()
+        mock_product_repo.bulk_create.return_value = [product]
+
+        mock_cache_delete = AsyncMock()
+
+        items = [
+            make_product_dict("CODE001", batch_id=1),
+            make_product_dict("CODE002", batch_id=2),
+        ]
+
+        with patch_product_service_repos(
+            mock_product_repo, mock_batch_repo, mock_cache_delete=mock_cache_delete
+        ):
+            service = ProductService(mock_session)
+            await service.add_products(items)
+
+        deleted_keys = {call.args[0] for call in mock_cache_delete.await_args_list}
+        assert "batch_detail:1" in deleted_keys
+        assert "batch_detail:2" in deleted_keys
+        assert "dashboard_stats" in deleted_keys
+
 
 # Тесты aggregate_products
 

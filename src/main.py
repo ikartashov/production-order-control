@@ -14,6 +14,7 @@ from core.cache import check_redis_connection, close_redis
 from core.config import get_settings
 from core.database import check_db_connection
 from core.exceptions import register_exception_handlers
+from core.rate_limit import RateLimitMiddleware
 from storage.minio_service import MinIOService
 
 
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     )
 
     register_exception_handlers(app)
+    app.add_middleware(RateLimitMiddleware)
 
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(batches_router, prefix="/api/v1")

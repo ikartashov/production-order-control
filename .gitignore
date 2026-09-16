@@ -47,4 +47,10 @@ celerybeat.pid
 
 # Alembic — версии коммитим, кэш нет
 alembic/__pycache__/
+
+# Graphify (личный аналитический артефакт, не нужен в репозитории)
+graphify-out/
+
+# Устаревший сгенерированный снимок структуры проекта
+structure.md
 .idea/

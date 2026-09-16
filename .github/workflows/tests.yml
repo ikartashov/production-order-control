@@ -1,0 +1,80 @@
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    # Реальные Postgres/Redis как service-контейнеры GitHub Actions — порты
+    # пробрасываются на localhost хоста джобы, поэтому переменные окружения
+    # ниже указывают на localhost (в отличие от docker-compose.yml, где
+    # приложение обращается к сервисам по их сервисным именам внутри
+    # docker-compose сети).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: production_control
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: changeme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PYTHONPATH: src   # нет пакета, src/ добавляем в путь вручную
+
+      # Все обязательные поля Settings (см. core/config.py) должны быть
+      # заданы, иначе приложение не импортируется. DATABASE_URL/REDIS_URL
+      # указывают на service-контейнеры выше; CELERY_*/MINIO_*/SECRET_KEY —
+      # синтаксически валидные значения-заглушки: ни один из тестов в
+      # tests/unit или tests/integration не устанавливает реальное
+      # соединение с RabbitMQ/MinIO (интеграционные тесты сознательно не
+      # запускают сценарии, которые ставят задачи в Celery — см.
+      # tests/integration/test_webhooks_api.py).
+      DATABASE_URL: postgresql+asyncpg://postgres:changeme@localhost:5432/production_control
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_DB_CACHE: "0"
+      REDIS_DB_CELERY: "1"
+      CELERY_BROKER_URL: amqp://guest:guest@localhost:5672//
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+      MINIO_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin-secret
+      MINIO_SECURE: "false"
+      SECRET_KEY: ci-test-secret-key-minimum-32-characters-long
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pip install poetry==1.8.5
+
+      - name: Install dependencies
+        run: poetry install --no-root --no-interaction   # плоская структура, root не нужен
+
+      - name: Run database migrations
+        run: poetry run alembic upgrade head
+
+      - name: Run pytest (unit + integration)
+        run: poetry run pytest tests/unit tests/integration -v

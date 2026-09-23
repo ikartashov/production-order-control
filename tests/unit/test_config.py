@@ -30,6 +30,9 @@ _ENV_VARS_TO_ISOLATE = (
     "RABBITMQ_USER",
     "RABBITMQ_PASSWORD",
     "RABBITMQ_VHOST",
+    "RATE_LIMIT_REQUESTS",
+    "RATE_LIMIT_WINDOW_SECONDS",
+    "RATE_LIMIT_EXEMPT_PATHS",
 )
 
 
@@ -39,18 +42,6 @@ def _isolate_from_process_env(monkeypatch: pytest.MonkeyPatch) -> None:
     kwargs, явно переданные в тестах этого модуля (см. комментарий выше)."""
     for var in _ENV_VARS_TO_ISOLATE:
         monkeypatch.delenv(var, raising=False)
-
-
-class TestRateLimitSettings:
-    """Тесты дефолтных значений полей rate limiting в ``Settings``."""
-
-    def test_defaults_when_not_overridden_by_env(self) -> None:
-        """Без переопределения через окружение используются дефолты."""
-        settings = Settings()
-
-        assert settings.rate_limit_requests == 100
-        assert settings.rate_limit_window_seconds == 60
-        assert settings.rate_limit_exempt_paths == ["/health"]
 
 
 # Минимальный набор полей без discrete/composed duality (обязательны всегда),
@@ -86,6 +77,27 @@ _ALL_DISCRETE_KWARGS: dict = {
     "rabbitmq_user": "admin",
     "rabbitmq_password": "admin",
 }
+
+
+class TestRateLimitSettings:
+    """Тесты дефолтных значений полей rate limiting в ``Settings``."""
+
+    def test_defaults_when_not_overridden_by_env(self) -> None:
+        """Без переопределения через окружение используются дефолты.
+
+        Строится через ``_make_settings``/``_ALL_DISCRETE_KWARGS`` (а не
+        голым ``Settings()``), чтобы тест не зависел от того, есть ли в
+        окружении, где он запускается, реальный ``.env`` или явно заданные
+        DATABASE_URL/POSTGRES_*/... — раньше это делало тест недетерминиро-
+        ванным: локально (где есть гитигнорящийся ``.env`` с готовым
+        DATABASE_URL) он проходил, а в CI-джобе без этих переменных падал
+        на сборке DATABASE_URL, хотя сам тест вообще не про DATABASE_URL.
+        """
+        settings = _make_settings(**_ALL_DISCRETE_KWARGS)
+
+        assert settings.rate_limit_requests == 100
+        assert settings.rate_limit_window_seconds == 60
+        assert settings.rate_limit_exempt_paths == ["/health"]
 
 
 class TestDatabaseUrlAssembly:

@@ -13,12 +13,13 @@ repos:
         args: ["--maxkb=1024"]
 
   # ── Ruff (linter + isort) ───────────────────────────────
+  # Только линт, без ruff-format — форматирование делает black (см. ниже),
+  # чтобы два форматтера не спорили друг с другом и не гоняли diff туда-сюда.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.4
     hooks:
       - id: ruff
         args: [--fix]
-      - id: ruff-format   # форматирование через ruff (альтернатива black)
 
   # ── Black ───────────────────────────────────────────────
   - repo: https://github.com/psf/black
@@ -27,15 +28,29 @@ repos:
       - id: black
 
   # ── Mypy ────────────────────────────────────────────────
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
+  # language: system — запускаем mypy из локального Poetry-окружения проекта,
+  # а не в изолированном venv pre-commit. Так mypy видит все реальные зависимости
+  # (celery, minio, pandas, openpyxl, reportlab, httpx и т.д.) без необходимости
+  # дублировать их в additional_dependencies и без риска несовпадения архитектуры
+  # бинарного пакета mypy (arm64/x86_64) в кэше pre-commit.
+  #
+  # `arch -arm64` — на этой машине /usr/local/bin/git собран только под x86_64,
+  # поэтому git (и всё, что он запускает, включая этот хук) выполняется под
+  # Rosetta; без явного пиннинга архитектуры .venv/bin/python наследует x86_64
+  # и падает при попытке dlopen native-модуля mypy, собранного под arm64.
+  # На системах без Rosetta/`arch` просто используется обычный вызов.
+  - repo: local
     hooks:
       - id: mypy
-        args: [--config-file=pyproject.toml]
-        additional_dependencies:
-          - pydantic>=2.10
-          - sqlalchemy>=2.0
-          - types-redis
+        name: mypy
+        entry: >-
+          sh -c 'command -v arch >/dev/null 2>&1 &&
+          exec arch -arm64 poetry run mypy --config-file=pyproject.toml src ||
+          exec poetry run mypy --config-file=pyproject.toml src'
+        language: system
+        types: [python]
+        exclude: ^(alembic/|tests/)
+        pass_filenames: false
 
   # ── Bandit (security) ───────────────────────────────────
   - repo: https://github.com/PyCQA/bandit

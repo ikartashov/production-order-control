@@ -4,6 +4,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
 from data.models.batch import Batch
+from data.models.work_center import WorkCenter
 from data.repositories.base_repository import BaseRepository
 
 
@@ -122,3 +123,58 @@ class BatchRepository(BaseRepository[Batch]):
             .values(is_closed=True, closed_at=now)
         )
         await self._session.flush()
+
+    async def get_today_counts(self, today_start: datetime) -> tuple[int, int]:
+        """Получить (создано сегодня, закрыто сегодня) одним COUNT-запросом.
+
+        ``today_start`` — начало текущих суток по UTC, вычисляется один раз
+        вызывающим кодом (``compute_dashboard_stats``) и переиспользуется для
+        всех "сегодняшних" метрик дашборда, чтобы не было рассинхронизации
+        границы суток между партиями и продукцией.
+        """
+        result = await self._session.execute(
+            select(
+                func.count(Batch.id).filter(Batch.created_at >= today_start),
+                func.count(Batch.id).filter(Batch.closed_at >= today_start),
+            )
+        )
+        created_today, closed_today = result.one()
+        return created_today, closed_today
+
+    async def get_shift_counts(self) -> dict[str, int]:
+        """Получить количество партий по каждому значению смены (GROUP BY shift).
+
+        ``shift`` — свободный текст, а не enum, поэтому ключи словаря — это
+        ровно те значения, что реально встречаются в данных.
+        """
+        result = await self._session.execute(
+            select(Batch.shift, func.count(Batch.id)).group_by(Batch.shift)
+        )
+        counts: dict[str, int] = {}
+        for shift, count in result.all():
+            counts[shift] = count
+        return counts
+
+    async def get_top_work_centers_by_batches(
+        self, limit: int = 5
+    ) -> list[tuple[str, str, int]]:
+        """Топ рабочих центров по числу партий: (identifier, name, batches_count).
+
+        Один агрегатный запрос с JOIN на ``WorkCenter`` и GROUP BY по нему,
+        отсортированный по количеству партий по убыванию и ограниченный
+        ``limit``. Долю продукции/агрегации по этим рабочим центрам
+        досчитывает ``ProductRepository.get_work_center_stats`` — здесь
+        только партийная часть блока ``top_work_centers`` дашборда.
+        """
+        result = await self._session.execute(
+            select(
+                WorkCenter.identifier,
+                WorkCenter.name,
+                func.count(Batch.id),
+            )
+            .join(WorkCenter, Batch.work_center_id == WorkCenter.id)
+            .group_by(WorkCenter.id, WorkCenter.identifier, WorkCenter.name)
+            .order_by(func.count(Batch.id).desc())
+            .limit(limit)
+        )
+        return list(result.tuples().all())

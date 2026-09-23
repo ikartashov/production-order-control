@@ -3,6 +3,33 @@ from datetime import date
 from pydantic import BaseModel
 
 
+class TodayStats(BaseModel):
+    """Показатели дашборда за текущие сутки (UTC)."""
+
+    batches_created: int
+    batches_closed: int
+    products_added: int
+    products_aggregated: int
+
+
+class ShiftStats(BaseModel):
+    """Показатели дашборда в разрезе одной смены."""
+
+    batches: int
+    products: int
+    aggregated: int
+
+
+class WorkCenterStats(BaseModel):
+    """Показатели дашборда по одному рабочему центру (для топа по партиям)."""
+
+    id: str
+    name: str
+    batches_count: int
+    products_count: int
+    aggregation_rate: float
+
+
 class DashboardSummary(BaseModel):
     """Сводные показатели дашборда."""
 
@@ -12,6 +39,9 @@ class DashboardSummary(BaseModel):
     total_products: int
     aggregated_products: int
     aggregation_rate: float
+    today: TodayStats
+    by_shift: dict[str, ShiftStats]
+    top_work_centers: list[WorkCenterStats]
 
     model_config = {"extra": "ignore"}
 
@@ -50,12 +80,21 @@ class Timeline(BaseModel):
     estimated_completion: str | None
 
 
+class TeamPerformance(BaseModel):
+    """Показатели эффективности бригады, выполняющей партию."""
+
+    team: str
+    avg_products_per_hour: float
+    efficiency_score: float
+
+
 class BatchStatisticsResponse(BaseModel):
     """Ответ статистики по одной партии."""
 
     batch_info: BatchInfo
     production_stats: ProductionStats
     timeline: Timeline
+    team_performance: TeamPerformance
 
 
 class CompareBatchesRequest(BaseModel):

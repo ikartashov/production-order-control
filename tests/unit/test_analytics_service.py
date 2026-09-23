@@ -5,9 +5,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from api.v1.schemas.analytics import BatchStatisticsResponse, DashboardSummary
 from core.exceptions import NotFoundError
 from data.models.batch import Batch
-from domain.services.analytics_service import AnalyticsService
+from domain.services.analytics_service import EFFICIENCY_SCORE_CAP, AnalyticsService
 
 BATCH_REPO_PATH = "domain.services.analytics_service.BatchRepository"
 PRODUCT_REPO_PATH = "domain.services.analytics_service.ProductRepository"
@@ -39,6 +40,27 @@ def patch_analytics_service_repos(
         yield
 
 
+def configure_dashboard_extras_defaults(
+    mock_batch_repo: AsyncMock, mock_product_repo: AsyncMock
+) -> None:
+    """Настроить репозитории на "пустые" значения для новых блоков дашборда.
+
+    ``compute_dashboard_stats`` теперь дополнительно ходит за ``today``,
+    ``by_shift`` и ``top_work_centers`` — без явной настройки этих методов
+    ``AsyncMock`` возвращал бы неитерируемый ``MagicMock`` вместо кортежа/
+    словаря/списка и падал бы при распаковке. Тесты, которым важны только
+    "старые" поля (или которые проверяют именно новые блоки — тогда они
+    переопределяют нужный return_value после вызова этого хелпера), зовут
+    этот хелпер для безопасных нейтральных значений по умолчанию.
+    """
+    mock_batch_repo.get_today_counts.return_value = (0, 0)
+    mock_batch_repo.get_shift_counts.return_value = {}
+    mock_batch_repo.get_top_work_centers_by_batches.return_value = []
+    mock_product_repo.get_today_counts.return_value = (0, 0)
+    mock_product_repo.get_shift_stats.return_value = {}
+    mock_product_repo.get_work_center_stats.return_value = {}
+
+
 def make_tz_batch(
     *,
     batch_id: int = 1,
@@ -46,6 +68,7 @@ def make_tz_batch(
     is_closed: bool = False,
     shift_start: datetime | None = None,
     shift_end: datetime | None = None,
+    team: str = "Бригада Иванова",
 ) -> Batch:
     """Партия с timezone-aware shift_start/shift_end (как в БД: DateTime(timezone=True)).
 
@@ -61,6 +84,7 @@ def make_tz_batch(
     b.is_closed = is_closed
     b.shift_start = shift_start or datetime(2024, 1, 30, 8, 0, tzinfo=UTC)
     b.shift_end = shift_end or datetime(2024, 1, 30, 20, 0, tzinfo=UTC)
+    b.team = team
     return b
 
 
@@ -112,6 +136,7 @@ class TestGetDashboardStats:
         mock_batch_repo.get_summary_counts.return_value = (10, 4)
         mock_product_repo = AsyncMock()
         mock_product_repo.get_global_stats.return_value = (100, 60)
+        configure_dashboard_extras_defaults(mock_batch_repo, mock_product_repo)
 
         with (
             patch_analytics_service_repos(mock_batch_repo, mock_product_repo),
@@ -144,6 +169,7 @@ class TestGetDashboardStats:
         mock_batch_repo.get_summary_counts.return_value = (0, 0)
         mock_product_repo = AsyncMock()
         mock_product_repo.get_global_stats.return_value = (0, 0)
+        configure_dashboard_extras_defaults(mock_batch_repo, mock_product_repo)
 
         with (
             patch_analytics_service_repos(mock_batch_repo, mock_product_repo),
@@ -154,6 +180,108 @@ class TestGetDashboardStats:
             result = await service.get_dashboard_stats()
 
         assert result["aggregation_rate"] == 0.0
+
+
+class TestComputeDashboardStatsExtras:
+    """Тесты для блоков ``today``/``by_shift``/``top_work_centers`` дашборда."""
+
+    async def test_today_by_shift_and_top_work_centers_shape_and_values(
+        self,
+        mock_session: AsyncMock,
+    ) -> None:
+        """Новые блоки дашборда собираются из соответствующих методов
+        репозиториев и корректно сводятся по ключу (смена/identifier РЦ)."""
+        mock_batch_repo = AsyncMock()
+        mock_batch_repo.get_summary_counts.return_value = (10, 4)
+        mock_batch_repo.get_today_counts.return_value = (15, 12)
+        mock_batch_repo.get_shift_counts.return_value = {
+            "1 смена": 500,
+            "2 смена": 450,
+        }
+        mock_batch_repo.get_top_work_centers_by_batches.return_value = [
+            ("RC-001", "Цех №1", 300),
+            ("RC-002", "Цех №2", 100),
+        ]
+
+        mock_product_repo = AsyncMock()
+        mock_product_repo.get_global_stats.return_value = (100, 60)
+        mock_product_repo.get_today_counts.return_value = (1500, 1200)
+        mock_product_repo.get_shift_stats.return_value = {
+            "1 смена": (50000, 42000),
+            "2 смена": (45000, 38000),
+        }
+        mock_product_repo.get_work_center_stats.return_value = {
+            "RC-001": (30000, 25650),
+            # RC-002 намеренно отсутствует — партии есть, продукции ещё нет.
+        }
+
+        with (
+            patch_analytics_service_repos(mock_batch_repo, mock_product_repo),
+            patch(CACHE_GET_PATH, AsyncMock(return_value=None)),
+            patch(CACHE_SET_PATH, AsyncMock()),
+        ):
+            service = AnalyticsService(mock_session)
+            result = await service.get_dashboard_stats()
+
+        assert result["today"] == {
+            "batches_created": 15,
+            "batches_closed": 12,
+            "products_added": 1500,
+            "products_aggregated": 1200,
+        }
+        assert result["by_shift"] == {
+            "1 смена": {"batches": 500, "products": 50000, "aggregated": 42000},
+            "2 смена": {"batches": 450, "products": 45000, "aggregated": 38000},
+        }
+        assert result["top_work_centers"] == [
+            {
+                "id": "RC-001",
+                "name": "Цех №1",
+                "batches_count": 300,
+                "products_count": 30000,
+                "aggregation_rate": pytest.approx(85.5),
+            },
+            {
+                "id": "RC-002",
+                "name": "Цех №2",
+                "batches_count": 100,
+                "products_count": 0,
+                "aggregation_rate": 0.0,
+            },
+        ]
+
+        DashboardSummary.model_validate(result)
+
+    async def test_by_shift_defaults_missing_product_stats_to_zero(
+        self,
+        mock_session: AsyncMock,
+    ) -> None:
+        """Смена с партиями, но без продукции, попадает в by_shift с нулями,
+        а не выпадает из выдачи (GROUP BY на стороне продукции не даёт
+        строку для пустой группы)."""
+        mock_batch_repo = AsyncMock()
+        mock_batch_repo.get_summary_counts.return_value = (1, 1)
+        mock_batch_repo.get_today_counts.return_value = (0, 0)
+        mock_batch_repo.get_shift_counts.return_value = {"3 смена": 5}
+        mock_batch_repo.get_top_work_centers_by_batches.return_value = []
+
+        mock_product_repo = AsyncMock()
+        mock_product_repo.get_global_stats.return_value = (0, 0)
+        mock_product_repo.get_today_counts.return_value = (0, 0)
+        mock_product_repo.get_shift_stats.return_value = {}
+        mock_product_repo.get_work_center_stats.return_value = {}
+
+        with (
+            patch_analytics_service_repos(mock_batch_repo, mock_product_repo),
+            patch(CACHE_GET_PATH, AsyncMock(return_value=None)),
+            patch(CACHE_SET_PATH, AsyncMock()),
+        ):
+            service = AnalyticsService(mock_session)
+            result = await service.get_dashboard_stats()
+
+        assert result["by_shift"] == {
+            "3 смена": {"batches": 5, "products": 0, "aggregated": 0}
+        }
 
 
 # Тесты get_batch_statistics
@@ -205,6 +333,13 @@ class TestGetBatchStatistics:
         assert result["timeline"]["products_per_hour"] > 0
         assert result["timeline"]["estimated_completion"] is not None
 
+        assert result["team_performance"]["team"] == "Бригада Иванова"
+        assert result["team_performance"]["avg_products_per_hour"] == pytest.approx(
+            result["timeline"]["products_per_hour"]
+        )
+
+        BatchStatisticsResponse.model_validate(result)
+
     async def test_completed_batch_estimates_shift_end(
         self,
         mock_session: AsyncMock,
@@ -245,6 +380,124 @@ class TestGetBatchStatistics:
             service = AnalyticsService(mock_session)
             with pytest.raises(NotFoundError):
                 await service.get_batch_statistics(999)
+
+
+class TestTeamPerformanceEfficiencyScore:
+    """Тесты для efficiency_score в team_performance (get_batch_statistics).
+
+    Формула: ``required_products_per_hour = total / shift_duration_hours``,
+    ``efficiency_score = products_per_hour / required_products_per_hour * 100``,
+    зажатое сверху ``EFFICIENCY_SCORE_CAP``.
+    """
+
+    async def test_on_pace_batch_scores_around_100_percent(
+        self,
+        mock_session: AsyncMock,
+    ) -> None:
+        """Партия, у которой смена только что закончилась и вся продукция
+        агрегирована день в день по всей длительности смены, — темп
+        совпадает с требуемым, efficiency_score ~100%."""
+        now = datetime.now(UTC)
+        tz_batch = make_tz_batch(
+            shift_start=now - timedelta(hours=8),
+            shift_end=now,
+        )
+        mock_batch_service = AsyncMock()
+        mock_batch_service.get_batch.return_value = tz_batch
+        mock_product_repo = AsyncMock()
+        mock_product_repo.get_batch_stats.return_value = (100, 100)
+
+        with patch_analytics_service_repos(
+            mock_product_repo=mock_product_repo,
+            mock_batch_service=mock_batch_service,
+        ):
+            service = AnalyticsService(mock_session)
+            result = await service.get_batch_statistics(1)
+
+        assert result["team_performance"]["efficiency_score"] == pytest.approx(
+            100.0, abs=0.5
+        )
+
+    async def test_well_under_pace_batch_scores_well_below_100_percent(
+        self,
+        mock_session: AsyncMock,
+    ) -> None:
+        """Партия, отстающая от темпа, требуемого для завершения к концу
+        смены, получает efficiency_score существенно ниже 100%."""
+        now = datetime.now(UTC)
+        tz_batch = make_tz_batch(
+            shift_start=now - timedelta(hours=8),
+            shift_end=now + timedelta(hours=8),
+        )
+        mock_batch_service = AsyncMock()
+        mock_batch_service.get_batch.return_value = tz_batch
+        mock_product_repo = AsyncMock()
+        # required_products_per_hour = 1000 / 16 = 62.5
+        # products_per_hour = 100 / 8 = 12.5 -> efficiency ~= 20%
+        mock_product_repo.get_batch_stats.return_value = (1000, 100)
+
+        with patch_analytics_service_repos(
+            mock_product_repo=mock_product_repo,
+            mock_batch_service=mock_batch_service,
+        ):
+            service = AnalyticsService(mock_session)
+            result = await service.get_batch_statistics(1)
+
+        assert result["team_performance"]["efficiency_score"] == pytest.approx(
+            20.0, abs=1.0
+        )
+        assert result["team_performance"]["efficiency_score"] < 100.0
+
+    async def test_early_shift_spike_is_capped(
+        self,
+        mock_session: AsyncMock,
+    ) -> None:
+        """В самом начале смены мгновенный темп (от малого elapsed_hours)
+        может в разы превышать требуемый средний темп на всю смену —
+        efficiency_score не должен улетать в абсурдные значения, а
+        зажимается EFFICIENCY_SCORE_CAP."""
+        now = datetime.now(UTC)
+        tz_batch = make_tz_batch(
+            shift_start=now - timedelta(minutes=1),
+            shift_end=now + timedelta(hours=7, minutes=59),
+        )
+        mock_batch_service = AsyncMock()
+        mock_batch_service.get_batch.return_value = tz_batch
+        mock_product_repo = AsyncMock()
+        # required_products_per_hour = 800 / 8 = 100
+        # products_per_hour ~= 50 / (1/60) = 3000 -> efficiency ~= 3000%, must cap.
+        mock_product_repo.get_batch_stats.return_value = (800, 50)
+
+        with patch_analytics_service_repos(
+            mock_product_repo=mock_product_repo,
+            mock_batch_service=mock_batch_service,
+        ):
+            service = AnalyticsService(mock_session)
+            result = await service.get_batch_statistics(1)
+
+        assert result["team_performance"]["efficiency_score"] == EFFICIENCY_SCORE_CAP
+
+    async def test_zero_shift_duration_avoids_division_by_zero(
+        self,
+        mock_session: AsyncMock,
+    ) -> None:
+        """Нулевая длительность смены не приводит к делению на ноль —
+        efficiency_score = 0.0."""
+        now = datetime.now(UTC)
+        tz_batch = make_tz_batch(shift_start=now, shift_end=now)
+        mock_batch_service = AsyncMock()
+        mock_batch_service.get_batch.return_value = tz_batch
+        mock_product_repo = AsyncMock()
+        mock_product_repo.get_batch_stats.return_value = (0, 0)
+
+        with patch_analytics_service_repos(
+            mock_product_repo=mock_product_repo,
+            mock_batch_service=mock_batch_service,
+        ):
+            service = AnalyticsService(mock_session)
+            result = await service.get_batch_statistics(1)
+
+        assert result["team_performance"]["efficiency_score"] == 0.0
 
 
 # Тесты compare_batches

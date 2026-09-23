@@ -35,25 +35,15 @@ Copy the example env file and fill in real values:
 cp .env.example .env
 ```
 
-**Known gotcha — `.env.example` vs `Settings`:** `.env.example` documents
-*discrete* host/port/credential variables (`POSTGRES_HOST`, `POSTGRES_PORT`,
-`REDIS_HOST`, `RABBITMQ_HOST`, etc.) and shows the composed URLs only as
-commented-out examples. But `Settings` in `src/core/config.py` actually
-requires the **pre-composed URL/DSN fields** directly from the environment —
-`database_url`, `redis_url`, `celery_broker_url`, `celery_result_backend`
-(plus `minio_endpoint`, `minio_access_key`, `minio_secret_key`, `secret_key`)
-are all required with no defaults and are *not* assembled from the discrete
-host/port vars at runtime. In other words, simply copying `.env.example` as-is
-will fail Pydantic validation at startup. Until this is reconciled, you need
-to add the composed variables yourself, e.g.:
-
-```bash
-DATABASE_URL=postgresql+asyncpg://postgres:changeme@localhost:5432/production_control
-REDIS_URL=redis://localhost:6379/0
-CELERY_BROKER_URL=amqp://admin:changeme@localhost:5672//
-CELERY_RESULT_BACKEND=redis://localhost:6379/1
-SECRET_KEY=<at least 32 characters>
-```
+`Settings` in `src/core/config.py` assembles `DATABASE_URL`, `REDIS_URL`,
+`CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` automatically from the
+discrete host/port/credential variables (`POSTGRES_HOST`, `REDIS_HOST`,
+`RABBITMQ_HOST`, etc.) documented in `.env.example`, so copying it as-is is
+enough. You can still set any of the composed URLs explicitly in `.env` to
+override the assembled value (e.g. to point at a managed DB) — an explicit
+value always wins over assembly. You'll still need to set `SECRET_KEY` (at
+least 32 characters) and the MinIO credentials yourself, as those have no
+discrete/composed duality.
 
 (Env var names are case-insensitive per `Settings.model_config`.)
 

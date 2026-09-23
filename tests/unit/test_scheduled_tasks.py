@@ -316,6 +316,24 @@ class TestUpdateCachedStatisticsAsync:
             "aggregated_products": 60,
             "aggregation_rate": 60.0,
             "cached_at": "2024-01-30T12:00:00+00:00",
+            "today": {
+                "batches_created": 1,
+                "batches_closed": 1,
+                "products_added": 10,
+                "products_aggregated": 8,
+            },
+            "by_shift": {
+                "1 смена": {"batches": 6, "products": 60, "aggregated": 36},
+            },
+            "top_work_centers": [
+                {
+                    "id": "RC-001",
+                    "name": "Цех №1",
+                    "batches_count": 10,
+                    "products_count": 100,
+                    "aggregation_rate": 60.0,
+                },
+            ],
         }
 
         with (

@@ -1,6 +1,10 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
 
+from data.models.batch import Batch
 from data.models.product import Product
+from data.models.work_center import WorkCenter
 from data.repositories.base_repository import BaseRepository
 
 
@@ -106,4 +110,65 @@ class ProductRepository(BaseRepository[Product]):
         return {
             batch_id: (total, aggregated)
             for batch_id, total, aggregated in result.all()
+        }
+
+    async def get_today_counts(self, today_start: datetime) -> tuple[int, int]:
+        """Получить (добавлено сегодня, агрегировано сегодня) одним COUNT-запросом.
+
+        ``today_start`` — начало текущих суток по UTC, передаётся вызывающим
+        кодом (та же точка отсчёта, что и в ``BatchRepository.get_today_counts``).
+        """
+        result = await self._session.execute(
+            select(
+                func.count(Product.id).filter(Product.created_at >= today_start),
+                func.count(Product.id).filter(Product.aggregated_at >= today_start),
+            )
+        )
+        added_today, aggregated_today = result.one()
+        return added_today, aggregated_today
+
+    async def get_shift_stats(self) -> dict[str, tuple[int, int]]:
+        """Получить {смена: (всего продукции, агрегировано)} через JOIN на Batch.
+
+        ``Product`` не хранит смену напрямую — она есть только на партии,
+        поэтому нужен JOIN. Один агрегатный запрос с GROUP BY по
+        ``Batch.shift`` вместо отдельного запроса на каждое значение смены.
+        Смены без единой продукции в выдаче не появляются — вызывающий код
+        (``compute_dashboard_stats``) должен подставлять ``(0, 0)`` по
+        умолчанию, комбинируя с ``BatchRepository.get_shift_counts``.
+        """
+        result = await self._session.execute(
+            select(
+                Batch.shift,
+                func.count(Product.id),
+                func.count(Product.id).filter(Product.is_aggregated.is_(True)),
+            )
+            .join(Batch, Product.batch_id == Batch.id)
+            .group_by(Batch.shift)
+        )
+        return {shift: (total, aggregated) for shift, total, aggregated in result.all()}
+
+    async def get_work_center_stats(self) -> dict[str, tuple[int, int]]:
+        """Получить {identifier рабочего центра: (всего продукции, агрегировано)}.
+
+        JOIN ``Product`` -> ``Batch`` -> ``WorkCenter``, GROUP BY по
+        рабочему центру. Считает по всем рабочим центрам сразу (не только по
+        топ-5) — вызывающий код (``compute_dashboard_stats``) сам выбирает из
+        результата нужные identifier'ы, полученные из
+        ``BatchRepository.get_top_work_centers_by_batches``, подставляя
+        ``(0, 0)`` для тех, у кого ещё нет продукции.
+        """
+        result = await self._session.execute(
+            select(
+                WorkCenter.identifier,
+                func.count(Product.id),
+                func.count(Product.id).filter(Product.is_aggregated.is_(True)),
+            )
+            .join(Batch, Product.batch_id == Batch.id)
+            .join(WorkCenter, Batch.work_center_id == WorkCenter.id)
+            .group_by(WorkCenter.id, WorkCenter.identifier)
+        )
+        return {
+            identifier: (total, aggregated)
+            for identifier, total, aggregated in result.all()
         }

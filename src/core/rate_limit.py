@@ -62,6 +62,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     необработанная ошибка (500) выше по стеку ASGI. Это было проверено
     эмпирически с помощью ``starlette.testclient.TestClient`` — см. отчёт
     в PR/описании задачи.
+
+    Пути, исключённые из ограничения, настраиваются через параметр
+    ``exempt_paths`` (по умолчанию — ``EXEMPT_PATHS``), а не зафиксированы
+    жёстко.
     """
 
     def __init__(
@@ -69,15 +73,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         app: object,
         limit: int = DEFAULT_RATE_LIMIT_REQUESTS,
         window_seconds: int = DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
+        exempt_paths: frozenset[str] = EXEMPT_PATHS,
     ) -> None:
         super().__init__(app)  # type: ignore[arg-type]
         self._limit = limit
         self._window_seconds = window_seconds
+        self._exempt_paths = exempt_paths
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if request.url.path in EXEMPT_PATHS:
+        if request.url.path in self._exempt_paths:
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"

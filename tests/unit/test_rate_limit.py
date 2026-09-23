@@ -304,3 +304,43 @@ class TestRateLimitMiddleware:
         response = await client.get("/ping")
         assert response.status_code == 200
         assert fake_redis.execute_calls == 2
+
+    async def test_custom_exempt_paths_override_default(
+        self, fake_redis: FakeRedis
+    ) -> None:
+        """``exempt_paths`` реально применяется: кастомный путь исключён,
+        а дефолтный ``/health`` — уже нет, если он не включён в переданный набор.
+        """
+        app = FastAPI()
+        app.add_middleware(
+            RateLimitMiddleware,
+            limit=1,
+            window_seconds=60,
+            exempt_paths=frozenset({"/custom-exempt"}),
+        )
+
+        @app.get("/health")
+        async def health() -> dict[str, str]:
+            return {"status": "ok"}
+
+        @app.get("/custom-exempt")
+        async def custom_exempt() -> dict[str, str]:
+            return {"status": "ok"}
+
+        with patch_get_redis(fake_redis):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                # /custom-exempt не учитывается лимитером, сколько бы раз
+                # его ни запросили (лимит=1).
+                for _ in range(3):
+                    response = await client.get("/custom-exempt")
+                    assert response.status_code == 200
+
+                # /health больше не в списке исключений — первый запрос
+                # проходит (лимит=1), второй уже получает 429.
+                response = await client.get("/health")
+                assert response.status_code == 200
+                response = await client.get("/health")
+                assert response.status_code == 429

@@ -49,6 +49,22 @@ class Settings(BaseSettings):
         ..., min_length=32, description="Используется для HMAC-подписи"
     )
 
+    # Rate limiting
+    rate_limit_requests: int = Field(
+        default=100, description="Максимум запросов на клиента за окно"
+    )
+    rate_limit_window_seconds: int = Field(
+        default=60, description="Длительность окна rate limiting, секунды"
+    )
+    rate_limit_exempt_paths: list[str] = Field(
+        default=["/health"],
+        description=(
+            "Пути, исключённые из rate limiting. Парсится pydantic-settings "
+            "из переменной окружения как JSON-массив строк, например: "
+            'RATE_LIMIT_EXEMPT_PATHS=["/health","/docs"]'
+        ),
+    )
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _validate_database_url(cls, v: str) -> str:

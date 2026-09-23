@@ -41,7 +41,12 @@ def create_app() -> FastAPI:
     )
 
     register_exception_handlers(app)
-    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(
+        RateLimitMiddleware,
+        limit=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+        exempt_paths=frozenset(settings.rate_limit_exempt_paths),
+    )
 
     app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(batches_router, prefix="/api/v1")
